@@ -7,7 +7,7 @@ name = "a2rl-drone-training"
 version = "0.1.0"
 description = "JAX/Crazyflow PPO training stack for autonomous FPV racing drones."
 readme = "README.md"
-requires-python = ">=3.11,<3.14"
+requires-python = ">=3.11,<3.15"
 dependencies = [
     "crazyflow==0.1.0",
     "jax>=0.4.30",
