@@ -15,6 +15,7 @@ from a2rl_drone_training.config import (
     TrainingConfig,
 )
 from a2rl_drone_training.course import course_by_name
+from a2rl_drone_training.runtime import RTX_5050_DEFAULTS, configure_runtime
 
 
 def _resolve_cpu_threads(value: str | None) -> int | None:
@@ -59,6 +60,17 @@ def _cpu_threads_arg(value: str) -> str:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Train an A2RL FPV racing policy.")
+    parser.add_argument(
+        "--profile",
+        choices=["rtx-5050"],
+        help="GPU starting preset; explicit flags override its defaults.",
+    )
+    parser.add_argument(
+        "--gpu-memory-fraction",
+        type=float,
+        default=None,
+        help="JAX GPU preallocation fraction, in (0, 1]; profile default: 0.60.",
+    )
     parser.add_argument("--num-envs", type=int, default=64)
     parser.add_argument("--total-env-steps", type=int, default=20_000_000)
     parser.add_argument("--schedule-env-steps", type=int, default=20_000_000)
@@ -397,8 +409,21 @@ def _build_training_config(args: argparse.Namespace) -> TrainingConfig:
     )
 
 
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.profile == "rtx-5050":
+        parser.set_defaults(**RTX_5050_DEFAULTS)
+        args = parser.parse_args(argv)
+    return args
+
+
 def main(argv: list[str] | None = None) -> None:
-    args = build_parser().parse_args(argv)
+    args = parse_args(argv)
+    try:
+        configure_runtime(args.device, args.gpu_memory_fraction)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     _configure_cpu_threads(args.cpu_threads, args.device)
 
     # Importing the trainer imports JAX, so it must happen after CPU runtime setup.

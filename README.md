@@ -15,18 +15,122 @@ Crazyflow's attitude controller accepts a yaw angle rather than a yaw-rate targe
 
 ## Install
 
+Run commands from the repository root. Use the examples for your shell: Bash on
+Linux, or Command Prompt (`cmd.exe`) on Windows (including a Command Prompt tab in Windows Terminal).
+Command Prompt uses a caret (`^`) for line continuation; it must be the last
+character on the line, with no trailing spaces.
+
+Linux (Bash):
+
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e .
 ```
 
+Windows (Command Prompt):
+
+```bat
+py -3.11 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e .
+```
+
+The Windows examples use the virtual environment's Python directly, so activation
+is unnecessary. The setup command assumes Python 3.11 is installed and available
+through the `py` launcher.
+
 The optional Warp backend is not required for the configured JAX/Crazyflow CPU path.
+
+## GPU Setup And RTX 5050 Laptop Preset
+
+JAX CUDA runs on Linux; Windows users need WSL2 (listed as experimental by
+[JAX](https://docs.jax.dev/en/latest/installation.html)). The native Windows
+commands elsewhere in this README are for CPU training. Keep the Windows NVIDIA
+driver installed; WSL uses that driver, as described in the
+[NVIDIA WSL guide](https://docs.nvidia.com/cuda/wsl-user-guide/).
+
+If WSL is not installed, run this once in an administrator Command Prompt, then
+restart if prompted and complete Ubuntu's first-launch setup:
+
+```bat
+wsl --install -d Ubuntu
+```
+
+From Command Prompt in the repository root, open Ubuntu at the same location:
+
+```bat
+wsl -d Ubuntu
+```
+
+Inside Ubuntu, create a separate Linux environment (do not reuse the Windows
+`.venv`) and install the project together with CUDA-enabled JAX:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y python3-venv
+python3 -m venv .venv-wsl
+.venv-wsl/bin/python -m pip install --upgrade pip
+.venv-wsl/bin/python -m pip install -e . "jax[cuda13]"
+.venv-wsl/bin/python -m pip check
+.venv-wsl/bin/python -c "import jax; print(jax.devices('gpu'))"
+exit
+```
+
+The final check must list a GPU. CUDA 13 is the current JAX installation path;
+see the linked JAX guide for driver requirements. Dependency resolution and GPU
+execution must succeed before starting a long run.
+
+Back in Command Prompt, launch the acceptance stage through WSL:
+
+```bat
+wsl -d Ubuntu -- .venv-wsl/bin/python -m a2rl_drone_training.train ^
+  --profile rtx-5050 ^
+  --total-env-steps 2000000 ^
+  --schedule-env-steps 20000000 ^
+  --course arena_38m_stacked
+```
+
+The preset is a starting point for the 8 GB laptop GPU, not a measured optimum:
+
+| Setting | Value | Purpose |
+| --- | --- | --- |
+| Device | GPU | Require CUDA for simulation and model allocations |
+| Parallel environments | 256 | Amortize Python dispatch across more simulated drones |
+| Rollout horizon | 256 | Retain the existing temporal rollout length |
+| Minibatches | 32 | Keep 2,048 samples per minibatch, matching CPU defaults |
+| GPU memory preallocation | 60% | Leave room for the laptop display and other applications |
+
+Explicit flags override the preset, for example `--num-envs 128 --minibatches 16`.
+`--gpu-memory-fraction` controls JAX's allocation pool, not a hard limit on total
+process GPU memory; see [JAX memory allocation](https://docs.jax.dev/en/latest/gpu_memory_allocation.html).
+Physics stays at 500 Hz with rotor drag, and PPO retains four epochs and float32
+networks. The larger rollout batch changes update frequency per environment step;
+evaluate learning quality as well as throughput. Evaluation and checkpoint intervals
+are still measured in updates.
+
+Compare 64, 128, 256, and 512 environments on the actual laptop:
+
+```bat
+wsl -d Ubuntu -- .venv-wsl/bin/python scripts/benchmark_cpu_training.py ^
+  --device gpu ^
+  --warmup-updates 2 ^
+  --updates 5
+```
+
+Despite its historical filename, the benchmark supports both CPU and GPU. It
+excludes warmup updates, synchronizes optimizer completion, and disables evaluation
+and checkpoints to compare training throughput at the same physics fidelity.
+GPU cases use a fixed environment-count sweep; `--num-envs` configures CPU cases.
+Use the fastest count that fits in memory, then verify the acceptance metrics with
+evaluation enabled. The environment still has a Python rollout loop and synchronizes
+on episode resets, so higher GPU utilization and a speedup are not guaranteed.
 
 ## Recommended Staged Training
 
 Start with a two-million-step acceptance stage while keeping every PPO schedule on
 the full twenty-million-step clock:
+
+Linux (Bash):
 
 ```bash
 a2rl-drone-train \
@@ -45,8 +149,38 @@ a2rl-drone-train \
   --sim-hz 500 \
   --control-hz 100
 ```
+```bash
+./.venv/bin/python3.13 -m a2rl_drone_training.train \
+  --profile rtx-5050 \
+  --physics so_rpy_rotor \
+  --sim-hz 200 \
+  --control-hz 100 \
+  --no-evaluation
+```
+
+Windows (Command Prompt):
+
+```bat
+python -m a2rl_drone_training.train ^
+  --device cpu ^
+  --cpu-threads 8 ^
+  --num-envs 64 ^
+  --horizon 256 ^
+  --minibatches 8 ^
+  --update-epochs 4 ^
+  --gamma 0.999 ^
+  --gae-lambda 0.99 ^
+  --total-env-steps 2000000 ^
+  --schedule-env-steps 20000000 ^
+  --course arena_38m_stacked ^
+  --physics so_rpy_rotor_drag ^
+  --sim-hz 500 ^
+  --control-hz 100
+```
 
 After reviewing the acceptance metrics, resume the same schedule:
+
+Linux (Bash):
 
 ```bash
 a2rl-drone-train \
@@ -57,6 +191,17 @@ a2rl-drone-train \
   --restore-checkpoint checkpoints/checkpoint_latest.pkl
 ```
 
+Windows (Command Prompt):
+
+```bat
+.\.venv\Scripts\python.exe -m a2rl_drone_training.train ^
+  --device cpu ^
+  --cpu-threads 8 ^
+  --total-env-steps 20000000 ^
+  --schedule-env-steps 20000000 ^
+  --restore-checkpoint checkpoints/checkpoint_latest.pkl
+```
+
 Continue only when PPO values remain finite, at least 1,000 reset events are within
 `80% +/- 3%` local starts, linked G12 crossings are present, no recent active-window
 gate is below 50%, and the minimum recent rate is moving toward 80%. Also verify
@@ -64,6 +209,8 @@ that sampled-action saturation and the sampled/mean action gap trend down with t
 scheduled exploration ceiling.
 
 For faster CPU iteration at lower simulation fidelity:
+
+Linux (Bash):
 
 ```bash
 a2rl-drone-train \
@@ -79,7 +226,42 @@ a2rl-drone-train \
   --no-evaluation
 ```
 
+Windows (Command Prompt):
+
+```bat
+.\.venv\Scripts\python.exe -m a2rl_drone_training.train ^
+  --device cpu ^
+  --cpu-threads 8 ^
+  --num-envs 64 ^
+  --horizon 256 ^
+  --minibatches 8 ^
+  --update-epochs 4 ^
+  --physics so_rpy_rotor ^
+  --sim-hz 200 ^
+  --control-hz 100 ^
+  --no-evaluation
+```
+
+```bat
+python -m a2rl_drone_training.train ^
+  --device gpu ^
+  --profile rtx-5050 ^
+  --cpu-threads 8 ^
+  --num-envs 64 ^
+  --horizon 256 ^
+  --minibatches 8 ^
+  --update-epochs 4 ^
+  --physics so_rpy_rotor ^
+  --sim-hz 200 ^
+  --control-hz 100 ^
+  --no-evaluation
+```
+
 Training logs use an aligned SB3-style table. The `time/` section reports current and run-average FPS, iteration time, elapsed time, and ETA; the remaining sections retain every reward component, PPO diagnostic, curriculum state, and per-gate metric.
+
+Tables automatically fit the terminal width, including after resizing the window.
+Long labels and values are shortened with `...` to keep columns aligned without
+line wrapping. Full diagnostic values remain available in `metrics.jsonl`.
 
 Checkpoints default to `checkpoints/`, including atomic numbered saves and `checkpoint_latest.pkl`. Structured update records are appended to `checkpoints/metrics.jsonl`. Use `--no-checkpoint` for disposable benchmark runs.
 
@@ -206,6 +388,8 @@ gate-1-only and strict 1.0x.
 
 The chase-video script visualizes a fixed environment index, default `0`; it never chooses the best parallel environment.
 
+Linux (Bash):
+
 ```bash
 PYTHONPATH=src .venv/bin/python scripts/eval_chase_video.py \
   --checkpoint-dir checkpoints \
@@ -214,6 +398,20 @@ PYTHONPATH=src .venv/bin/python scripts/eval_chase_video.py \
   --num-eval-envs 32 \
   --visualization-env 0 \
   --seed 123 \
+  --device cpu
+```
+
+Windows (Command Prompt):
+
+```bat
+set "PYTHONPATH=src"
+.\.venv\Scripts\python.exe scripts/eval_chase_video.py ^
+  --checkpoint-dir checkpoints ^
+  --course arena_38m_stacked ^
+  --output artifacts/eval_chase_arena_38m_stacked.mp4 ^
+  --num-eval-envs 32 ^
+  --visualization-env 0 ^
+  --seed 123 ^
   --device cpu
 ```
 
@@ -238,7 +436,21 @@ blocked from resuming corrected Reward-V2 training.
 
 ## Tests And Benchmark
 
+Linux (Bash):
+
 ```bash
 PYTHONPATH=src python3 -m pytest -q
 PYTHONPATH=src python3 scripts/benchmark_cpu_training.py --updates 3
 ```
+
+Windows (Command Prompt):
+
+```bat
+.\.venv\Scripts\python.exe -m pip install pytest
+set "PYTHONPATH=src"
+.\.venv\Scripts\python.exe -m pytest -q
+.\.venv\Scripts\python.exe scripts/benchmark_cpu_training.py --updates 3
+```
+
+In Command Prompt, `set "PYTHONPATH=src"` applies to subsequent commands in the current
+terminal session.
