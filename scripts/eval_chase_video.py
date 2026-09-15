@@ -19,6 +19,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from a2rl_drone_training.config import ObservationConfig, RacingEnvConfig, TrainingConfig
+from a2rl_drone_training.actions import validate_checkpoint_actions
 from a2rl_drone_training.course import GateCourse, course_by_name
 from a2rl_drone_training.env import CrazyflowRacingEnv
 from a2rl_drone_training.networks import mode_action
@@ -40,6 +41,7 @@ def latest_checkpoint(directory: Path) -> Path:
 def load_checkpoint(path: Path) -> dict[str, Any]:
     with path.open("rb") as f:
         payload = pickle.load(f)
+    validate_checkpoint_actions(payload)
     if "actor_params" not in payload:
         raise ValueError(f"Checkpoint {path} does not contain actor_params")
     checkpoint_config = payload.get("config")

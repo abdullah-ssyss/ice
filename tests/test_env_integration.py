@@ -28,7 +28,7 @@ def _env_config(**overrides):
         "num_envs": 10,
         "sim_hz": 200,
         "control_hz": 100,
-        "physics": "so_rpy_rotor",
+        "physics": "first_principles",
         "max_episode_time_s": 1.0,
         "device": "cpu",
     }
@@ -212,23 +212,20 @@ class EnvironmentIntegrationTests(unittest.TestCase):
         finally:
             env.close()
 
-    def test_yaw_integrator_is_observable_and_resets_to_measured_yaw(self):
-        env = CrazyflowRacingEnv(_env_config(), self.obs_config, self.course)
+    def test_direct_motors_are_independent_and_bounded(self):
+        env = CrazyflowRacingEnv(_env_config(auto_reset=False), self.obs_config, self.course)
         try:
             obs = env.reset(seed=5)
-            measured_yaw = quat_to_yaw_xyzw(env.sim.data.states.quat[:, 0, :])
-            np.testing.assert_allclose(np.asarray(wrap_pi(env.yaw_cmd - measured_yaw)), 0.0)
-            np.testing.assert_allclose(np.asarray(obs[:, 22]), 0.0, atol=1.0e-6)
-
-            previous = env.yaw_cmd
-            action = jnp.zeros((env.config.num_envs, 4), dtype=jnp.float32).at[:, 3].set(1.0)
-            env.step(action)
-            expected_delta = env.config.max_yaw_rate_rad_s * env.config.dt
-            np.testing.assert_allclose(
-                np.asarray(wrap_pi(env.yaw_cmd - previous)), expected_delta, atol=1.0e-5
-            )
-            reset_obs = env.reset(seed=5)
-            np.testing.assert_allclose(np.asarray(reset_obs[:, 22]), 0.0, atol=1.0e-6)
+            np.testing.assert_allclose(np.asarray(obs[:, 22]), 0.0)
+            actions = jnp.zeros((env.config.num_envs, 4)).at[:, 0].set(2.0).at[:, 1].set(-2.0)
+            rpm = env._action_to_motor_rpm(actions)
+            np.testing.assert_allclose(np.asarray(rpm[:, 0]), env.motor_rpm_max, rtol=1e-6)
+            np.testing.assert_allclose(np.asarray(rpm[:, 1]), env.motor_rpm_min, atol=0.01)
+            np.testing.assert_allclose(np.asarray(rpm[:, 2:]), env.motor_rpm_hover, rtol=1e-6)
+            env.step(actions)
+            np.testing.assert_allclose(np.asarray(env.sim.data.controls.rotor_vel[:, 0]), rpm, rtol=1e-6)
+            self.assertGreater(float(jnp.max(jnp.abs(env.sim.data.states.ang_vel))), 0.0)
+            np.testing.assert_allclose(np.asarray(env.observe()[:, 22]), 0.0)
         finally:
             env.close()
 
@@ -381,7 +378,7 @@ class TrainerSmokeTests(unittest.TestCase):
 
             with checkpoint.open("rb") as file:
                 legacy_payload = pickle.load(file)
-            self.assertEqual(legacy_payload["checkpoint_version"], 5)
+            self.assertEqual(legacy_payload["checkpoint_version"], 6)
             self.assertIn("course_fingerprint", legacy_payload)
             legacy_payload.pop("schedule_steps")
             legacy_payload.pop("course_fingerprint")

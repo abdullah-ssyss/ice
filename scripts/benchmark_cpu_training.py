@@ -21,8 +21,8 @@ CASES = (
     BenchmarkCase("cpu_threads_8", ("--cpu-threads", "8")),
     BenchmarkCase("epochs_2_ablation", ("--update-epochs", "2")),
     BenchmarkCase(
-        "fast_physics_200hz",
-        ("--sim-hz", "200", "--control-hz", "100", "--physics", "so_rpy_rotor"),
+        "motor_control_200hz",
+        ("--sim-hz", "200", "--control-hz", "200", "--physics", "first_principles"),
     ),
 )
 

@@ -4,14 +4,40 @@ This package trains an autonomous FPV racing policy with Crazyflow simulation an
 
 ## System Shape
 
-- Environment: vectorized Crazyflow `Sim` in attitude-control mode.
-- Policy action: normalized `[throttle, roll, pitch, yaw_rate]` in `[-1, 1]`.
-- Crazyflow command: `[roll, pitch, yaw, collective_thrust]`.
+- Environment: vectorized Crazyflow `Sim` in direct rotor-velocity control mode.
+- Policy action: normalized `[motor_1, motor_2, motor_3, motor_4]` in `[-1, 1]`.
+- Crazyflow command: `[rpm_1, rpm_2, rpm_3, rpm_4]` in the simulator model's native motor order.
 - Actor: gate-conditioned deployment policy using noisy estimator and gate-PnP-compatible features.
 - Critic: asymmetric value network using exact, noise-free simulator state during training only.
 - Trainer: 256-step rollouts, truncation-correct GAE, clipped PPO, scheduled learning rates and entropy, and KL early stopping.
 
-Crazyflow's attitude controller accepts a yaw angle rather than a yaw-rate target. The adapter therefore integrates the policy's yaw-rate action. The current yaw error is included in the actor observation, and the integrated target is reset to measured yaw at every environment reset. This keeps the controller state observable without changing the deployed action interface.
+Each action independently commands one motor: `-1` maps to its minimum RPM,
+`0` to hover RPM, and `+1` to maximum RPM, with linear interpolation on either
+side of hover. RPM bounds come from the configured model's per-motor thrust limits
+and quadratic thrust curve. This bypasses attitude and force/torque controllers;
+first-principles physics models the resulting forces, torques, and rotor dynamics.
+Resets initialize rotor speeds to hover. The former yaw-error observation channel
+is reserved and always zero; actor/critic dimensions remain 54/37.
+
+Direct motor control requires `--physics first_principles`. The default simulation
+and action rates are both 500 Hz. A 256-step rollout now covers 0.512 seconds;
+discounting and training schedules are still expressed in steps. The action-change
+penalty defaults to 0.0002 to preserve its nominal per-second budget at the higher
+action rate (previously 0.001 at 100 Hz). Existing attitude-control checkpoints are
+incompatible even though both interfaces have four outputs; start fresh in a new
+checkpoint directory, such as `--checkpoint-dir checkpoints_motors`.
+
+WSL Ubuntu, with evaluation enabled for curriculum progression:
+
+```bash
+./.venv/bin/python3.13 -m a2rl_drone_training.train \
+  --profile rtx-5050 \
+  --physics first_principles \
+  --sim-hz 500 \
+  --control-hz 500 \
+  --checkpoint-dir checkpoints_motors
+```
+
 
 ## Install
 
@@ -103,7 +129,7 @@ The preset is a starting point for the 8 GB laptop GPU, not a measured optimum:
 Explicit flags override the preset, for example `--num-envs 128 --minibatches 16`.
 `--gpu-memory-fraction` controls JAX's allocation pool, not a hard limit on total
 process GPU memory; see [JAX memory allocation](https://docs.jax.dev/en/latest/gpu_memory_allocation.html).
-Physics stays at 500 Hz with rotor drag, and PPO retains four epochs and float32
+Physics uses the first-principles motor model at 500 Hz, and PPO retains four epochs and float32
 networks. The larger rollout batch changes update frequency per environment step;
 evaluate learning quality as well as throughput. Evaluation and checkpoint intervals
 are still measured in updates.
@@ -145,16 +171,16 @@ a2rl-drone-train \
   --total-env-steps 2000000 \
   --schedule-env-steps 20000000 \
   --course arena_38m_stacked \
-  --physics so_rpy_rotor_drag \
+  --physics first_principles \
   --sim-hz 500 \
-  --control-hz 100
+  --control-hz 500
 ```
 ```bash
 ./.venv/bin/python3.13 -m a2rl_drone_training.train \
   --profile rtx-5050 \
-  --physics so_rpy_rotor \
-  --sim-hz 200 \
-  --control-hz 100 \
+  --physics first_principles \
+  --sim-hz 500 \
+  --control-hz 500 \
   --no-evaluation
 ```
 
@@ -173,9 +199,9 @@ python -m a2rl_drone_training.train ^
   --total-env-steps 2000000 ^
   --schedule-env-steps 20000000 ^
   --course arena_38m_stacked ^
-  --physics so_rpy_rotor_drag ^
+  --physics first_principles ^
   --sim-hz 500 ^
-  --control-hz 100
+  --control-hz 500
 ```
 
 After reviewing the acceptance metrics, resume the same schedule:
@@ -208,7 +234,7 @@ gate is below 50%, and the minimum recent rate is moving toward 80%. Also verify
 that sampled-action saturation and the sampled/mean action gap trend down with the
 scheduled exploration ceiling.
 
-For faster CPU iteration at lower simulation fidelity:
+For CPU training without evaluation (benchmarking only):
 
 Linux (Bash):
 
@@ -220,9 +246,9 @@ a2rl-drone-train \
   --horizon 256 \
   --minibatches 8 \
   --update-epochs 4 \
-  --physics so_rpy_rotor \
-  --sim-hz 200 \
-  --control-hz 100 \
+  --physics first_principles \
+  --sim-hz 500 \
+  --control-hz 500 \
   --no-evaluation
 ```
 
@@ -236,9 +262,9 @@ Windows (Command Prompt):
   --horizon 256 ^
   --minibatches 8 ^
   --update-epochs 4 ^
-  --physics so_rpy_rotor ^
-  --sim-hz 200 ^
-  --control-hz 100 ^
+  --physics first_principles ^
+  --sim-hz 500 ^
+  --control-hz 500 ^
   --no-evaluation
 ```
 
@@ -251,9 +277,9 @@ python -m a2rl_drone_training.train ^
   --horizon 256 ^
   --minibatches 8 ^
   --update-epochs 4 ^
-  --physics so_rpy_rotor ^
-  --sim-hz 200 ^
-  --control-hz 100 ^
+  --physics first_principles ^
+  --sim-hz 500 ^
+  --control-hz 500 ^
   --no-evaluation
 ```
 
@@ -272,7 +298,7 @@ Checkpoints default to `checkpoints/`, including atomic numbered saves and `chec
 - Potential-based progress along a continuous course coordinate, scaled to about `+1.25` shaping return per gate.
 - Gate-centering pressure localized near the active gate plane.
 - A curriculum-scaled physical time cost, reaching `-0.2 reward/second` in racing phase D.
-- Squared action-change cost with a default coefficient of `0.001`, rather than raw throttle or action magnitude cost.
+- Squared action-change cost with a default coefficient of `0.0002`, rather than raw throttle or action magnitude cost.
 - `+6` gate pass and `+25` true full-course finish rewards.
 - `-8` missed-gate and competition-deadline penalties.
 - `-12` crash or out-of-bounds penalties.
@@ -333,12 +359,12 @@ The actor receives only deployment-compatible features:
 
 - Body gyro and specific force.
 - Attitude quaternion, body velocity, and body gravity.
-- Previous action, course progress, remaining competition time, integrated yaw error, and legacy-v1 stall state.
+- Previous action, course progress, remaining competition time, a reserved zero channel, and legacy-v1 stall state.
 - Relative gate pose, normal, image-plane bearing, visibility, and distance for the next `N` gates.
 
 Noise is applied in physical units per sensor/feature before normalization. `--sensor-noise-scale` scales all configured noise models; the legacy `--obs-additive-noise-std` spelling is retained as an alias for this scale. PnP dropout masks all PnP-derived geometry. Running normalization is used only for unbounded channels; bounded quaternions, normals, visibility, progress, and controller channels use fixed transforms.
 
-The critic separately receives exact pose, attitude, velocity, angular velocity, acceleration, active and next gate geometry, elapsed time, gate progress, previous action, yaw error, gate-window scale, and reset-start type. Those features never enter the actor network or actor loss.
+The critic separately receives exact pose, attitude, velocity, angular velocity, acceleration, active and next gate geometry, elapsed time, gate progress, previous motor action, a reserved zero channel, gate-window scale, and reset-start type. Those features never enter the actor network or actor loss.
 
 Normalization statistics are updated during training, frozen during evaluation, and stored in checkpoints.
 
@@ -417,22 +443,18 @@ set "PYTHONPATH=src"
 
 ## Checkpoints
 
-Schema-v5 checkpoints include actor and critic parameters, optimizer state, actor
+Schema-v6 checkpoints include actor and critic parameters, optimizer state, actor
 normalization statistics, curriculum phase, official and skill-audit counters, rolling
 audit history, latest strict-evaluation gate results and priority state, consumed PPO
 schedule steps, evaluation counters,
 total environment steps, update count, episode count, RNG state, and a signed course
 geometry fingerprint.
 
-The actor observation grew to include remaining time and yaw error, and the critic now has a separate privileged input dimension. Checkpoints from the earlier symmetric 51-dimensional architecture cannot be restored into this version. Reward-v1 ablations should start fresh or use checkpoints created with this observation architecture.
-
-Resume with `--restore-checkpoint`; `--total-env-steps` remains the final stopping
-target while `--schedule-env-steps` controls LR and entropy decay independently.
-Older checkpoints migrate their saved schedule fraction back to consumed schedule
-steps and initialize missing rolling-audit state empty. A checkpoint with a known,
-mismatched course fingerprint is rejected. Pre-correction Reward-V2 checkpoints
-without a fingerprint remain loadable for evaluation or Reward-V1 ablations, but are
-blocked from resuming corrected Reward-V2 training.
+Schema-v6 also records the action-space identifier
+`motor_rpm_hover_centered_v1`. Training and video evaluation reject checkpoints
+without that identifier, including all older attitude-control checkpoints. Motor
+checkpoints restore through `--restore-checkpoint`; the total-step target and the
+schedule-step budget remain independent. Course-fingerprint checks still apply.
 
 ## Tests And Benchmark
 

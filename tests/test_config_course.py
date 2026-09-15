@@ -35,7 +35,7 @@ class ConfigCourseTests(unittest.TestCase):
     def test_default_episode_horizon_is_24_seconds(self):
         cfg = RacingEnvConfig()
         self.assertEqual(cfg.max_episode_time_s, 24.0)
-        self.assertEqual(cfg.max_episode_steps, 2400)
+        self.assertEqual(cfg.max_episode_steps, 12000)
 
     def test_reward_v2_and_long_credit_assignment_are_defaults(self):
         cfg = RacingEnvConfig()
@@ -44,7 +44,7 @@ class ConfigCourseTests(unittest.TestCase):
         self.assertEqual(cfg.late_gate_reward_base, 1.0)
         self.assertEqual(cfg.late_gate_reward_cap, 4.0)
         self.assertEqual(cfg.time_penalty, 0.2)
-        self.assertEqual(cfg.action_delta_penalty, 0.001)
+        self.assertEqual(cfg.action_delta_penalty, 0.0002)
         self.assertEqual(cfg.potential_reward_weight, 1.25)
         self.assertEqual(cfg.potential_backtrack_limit, 0.5)
         self.assertEqual(cfg.gate_margin_penalty, 6.0)

@@ -17,6 +17,7 @@ import numpy as np
 from jax import Array
 
 from a2rl_drone_training.config import TrainingConfig
+from a2rl_drone_training.actions import ACTION_NAMES, ACTION_SPACE, validate_checkpoint_actions
 from a2rl_drone_training.console import format_table, print_table
 from a2rl_drone_training.course import GateCourse
 from a2rl_drone_training.curriculum import CurriculumController
@@ -48,7 +49,6 @@ from a2rl_drone_training.rewards import REWARD_COMPONENT_NAMES
 
 
 REWARD_COMPONENTS = REWARD_COMPONENT_NAMES
-ACTION_NAMES = ("throttle", "roll", "pitch", "yaw")
 
 
 @dataclass
@@ -851,7 +851,8 @@ class PPOTrainer:
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
-            "checkpoint_version": 5,
+            "checkpoint_version": 6,
+            "action_space": ACTION_SPACE,
             "course_fingerprint": _course_fingerprint(self.env.course),
             "actor_params": jax.device_get(self.state.actor_params),
             "critic_params": jax.device_get(self.state.critic_params),
@@ -884,6 +885,7 @@ class PPOTrainer:
         path = Path(path)
         with path.open("rb") as file:
             payload = pickle.load(file)
+        validate_checkpoint_actions(payload)
         required = ("actor_params", "critic_params", "actor_opt_state", "critic_opt_state")
         missing = [name for name in required if name not in payload]
         if missing:
@@ -1443,6 +1445,7 @@ class PPOTrainer:
                     "training",
                     [
                         ("algorithm", "PPO"),
+                        ("action_space", ACTION_SPACE),
                         ("num_envs", f"{self.config.env.num_envs:,}"),
                         ("rollout_length", f"{self.config.ppo.horizon:,}"),
                         ("batch_size", f"{steps_per_update:,}"),

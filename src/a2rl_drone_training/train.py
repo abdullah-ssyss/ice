@@ -130,10 +130,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--physics",
-        default="so_rpy_rotor_drag",
-        choices=["first_principles", "so_rpy", "so_rpy_rotor", "so_rpy_rotor_drag"],
+        default="first_principles",
+        choices=["first_principles"],
     )
-    parser.add_argument("--control-hz", type=int, default=100)
+    parser.add_argument("--control-hz", type=int, default=500)
     parser.add_argument("--sim-hz", type=int, default=500)
     parser.add_argument("--max-episode-time", type=float, default=24.0)
     parser.add_argument(
@@ -192,7 +192,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--action-delta-penalty",
         type=float,
-        default=0.001,
+        default=0.0002,
         help="Reward-v2 coefficient on squared action changes.",
     )
     parser.add_argument("--gate-margin-penalty", type=float, default=6.0)
